@@ -1,0 +1,15 @@
+google-genai
+streamlit
+fastapi
+uvicorn
+python-dotenv
+chromadb
+pydantic
+google-genai
+streamlit
+chromadb
+pymupdf
+langchain-text-splitters
+ddgs
+pydantic
+python-dotenv
