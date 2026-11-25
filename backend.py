@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 
 if sys.platform.startswith("win"):
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -18,6 +20,9 @@ import pymupdf
 load_dotenv()
 
 app = FastAPI(title="PDF RAG & Summarization API")
+
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 
 # Allow React frontend (localhost:5173 or Vercel) to call this API
 app.add_middleware(
@@ -84,11 +89,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.post("/chat")
-import os
-from fastapi.staticfiles import StaticFiles
-
-if os.path.exists("frontend/dist"):
-    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 def chat_stream(req: ChatRequest):
     question = req.question
     is_summary = any(
