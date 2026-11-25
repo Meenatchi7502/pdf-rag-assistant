@@ -21,7 +21,13 @@ export default function App() {
         method: "POST",
         body: formData,
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || `Server error (${res.status})`);
+      }
       if (!res.ok) throw new Error(data.detail || "Upload failed");
       setDocInfo(data);
     } catch (err) {

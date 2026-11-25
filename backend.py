@@ -47,42 +47,54 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    pdf_bytes = await file.read()
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
+    try:
+        pdf_bytes = await file.read()
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
 
-    ids, texts, metadatas, full_text_pages = [], [], [], []
-    for page_idx in range(len(doc)):
-        page_text = doc[page_idx].get_text("text").strip()
-        if not page_text:
-            continue
-        full_text_pages.append(f"--- Page {page_idx + 1} ---\n{page_text}")
-        for chunk_idx, chunk in enumerate(splitter.split_text(page_text)):
-            ids.append(f"p{page_idx+1}_c{chunk_idx}")
-            texts.append(chunk)
-            metadatas.append({"page": page_idx + 1})
+        ids, texts, metadatas, full_text_pages = [], [], [], []
+        for page_idx in range(len(doc)):
+            page_text = doc[page_idx].get_text("text").strip()
+            if not page_text:
+                continue
+            full_text_pages.append(f"--- Page {page_idx + 1} ---\n{page_text}")
+            for chunk_idx, chunk in enumerate(splitter.split_text(page_text)):
+                ids.append(f"p{page_idx+1}_c{chunk_idx}")
+                texts.append(chunk)
+                metadatas.append({"page": page_idx + 1})
 
-    if not texts:
-        raise HTTPException(status_code=400, detail="No readable text found in PDF.")
+        if not texts:
+            raise HTTPException(status_code=400, detail="No readable text found in PDF.")
 
-    app_state["full_pdf_text"] = "\n\n".join(full_text_pages)
-    app_state["filename"] = file.filename
+        app_state["full_pdf_text"] = "\n\n".join(full_text_pages)
+        app_state["filename"] = file.filename
 
-    emb_res = client.models.embed_content(
-        model="gemini-embedding-001", contents=texts
-    )
-    embeddings = [e.values for e in emb_res.embeddings]
+        # Embed in batches of 50 to avoid Gemini API batch size limits
+        embeddings = []
+        batch_size = 50
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            emb_res = client.models.embed_content(
+                model="gemini-embedding-001", contents=batch
+            )
+            embeddings.extend([e.values for e in emb_res.embeddings])
 
-    if collection.count() > 0:
-        collection.delete(ids=collection.get()["ids"])
+        if collection.count() > 0:
+            collection.delete(ids=collection.get()["ids"])
 
-    collection.add(ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas)
-    return {
-        "status": "success",
-        "filename": file.filename,
-        "pages": len(doc),
-        "chunks": len(texts),
-    }
+        collection.add(
+            ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas
+        )
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "pages": len(doc),
+            "chunks": len(texts),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Indexing error: {str(e)}")
 
 
 @app.post("/api/chat")
