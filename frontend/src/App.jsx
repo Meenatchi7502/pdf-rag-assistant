@@ -17,7 +17,7 @@ export default function App() {
     formData.append("file", file);
 
     try {
-      const res = await fetch(`${API_URL}/upload`, {
+      const res = await fetch(`${API_URL}/api/upload`, {
         method: "POST",
         body: formData,
       });
@@ -41,7 +41,7 @@ export default function App() {
     setStreaming(true);
 
     try {
-      const response = await fetch(`${API_URL}/chat`, {
+      const response = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),

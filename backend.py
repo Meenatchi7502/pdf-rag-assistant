@@ -42,7 +42,7 @@ class ChatRequest(BaseModel):
     question: str
 
 
-@app.post("/upload")
+@app.post("/api/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -85,7 +85,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     }
 
 
-@app.post("/chat")
+@app.post("/api/chat")
 def chat_stream(req: ChatRequest):
     question = req.question
     is_summary = any(
@@ -137,6 +137,6 @@ def chat_stream(req: ChatRequest):
     return StreamingResponse(token_generator(), media_type="text/plain")
 
 
-# Mount StaticFiles last so /upload and /chat match first.
+# Keep this mount last so the API routes match first.
 if os.path.exists("frontend/dist"):
     app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
