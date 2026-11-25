@@ -13,3 +13,6 @@ langchain-text-splitters
 ddgs
 pydantic
 python-dotenv
+fastapi
+uvicorn
+python-multipart
