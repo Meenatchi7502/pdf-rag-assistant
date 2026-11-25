@@ -21,9 +21,6 @@ load_dotenv()
 
 app = FastAPI(title="PDF RAG & Summarization API")
 
-if os.path.exists("frontend/dist"):
-    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
-
 # Allow React frontend (localhost:5173 or Vercel) to call this API
 app.add_middleware(
     CORSMiddleware,
@@ -138,3 +135,8 @@ def chat_stream(req: ChatRequest):
                 yield chunk.text
 
     return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+# Mount StaticFiles last so /upload and /chat match first.
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
