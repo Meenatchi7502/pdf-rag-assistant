@@ -5,7 +5,6 @@ import sys
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-import chromadb
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import numpy as np
 from pydantic import BaseModel
 import pymupdf
 
@@ -21,7 +21,6 @@ load_dotenv()
 
 app = FastAPI(title="PDF RAG & Summarization API")
 
-# Allow React frontend (localhost:5173 or Vercel) to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,11 +30,15 @@ app.add_middleware(
 )
 
 client = genai.Client()
-chroma_client = chromadb.Client()
-collection = chroma_client.get_or_create_collection(name="api_pdf_store")
 
-# Store extracted full text in memory for summary routing
-app_state = {"full_pdf_text": "", "filename": ""}
+# Lightweight in-memory vector store (avoids ChromaDB 512MB RAM crashes on Render)
+app_state = {
+    "full_pdf_text": "",
+    "filename": "",
+    "chunks": [],
+    "metadatas": [],
+    "embeddings": None,
+}
 
 
 class ChatRequest(BaseModel):
@@ -52,22 +55,18 @@ async def upload_pdf(file: UploadFile = File(...)):
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
 
-        ids, texts, metadatas, full_text_pages = [], [], [], []
+        texts, metadatas, full_text_pages = [], [], []
         for page_idx in range(len(doc)):
             page_text = doc[page_idx].get_text("text").strip()
             if not page_text:
                 continue
             full_text_pages.append(f"--- Page {page_idx + 1} ---\n{page_text}")
-            for chunk_idx, chunk in enumerate(splitter.split_text(page_text)):
-                ids.append(f"p{page_idx+1}_c{chunk_idx}")
+            for chunk in splitter.split_text(page_text):
                 texts.append(chunk)
                 metadatas.append({"page": page_idx + 1})
 
         if not texts:
             raise HTTPException(status_code=400, detail="No readable text found in PDF.")
-
-        app_state["full_pdf_text"] = "\n\n".join(full_text_pages)
-        app_state["filename"] = file.filename
 
         # Embed in batches of 50 to avoid Gemini API batch size limits
         embeddings = []
@@ -79,12 +78,16 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
             embeddings.extend([e.values for e in emb_res.embeddings])
 
-        if collection.count() > 0:
-            collection.delete(ids=collection.get()["ids"])
+        emb_matrix = np.array(embeddings, dtype=np.float32)
+        norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+        emb_matrix = emb_matrix / np.maximum(norms, 1e-10)
 
-        collection.add(
-            ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas
-        )
+        app_state["full_pdf_text"] = "\n\n".join(full_text_pages)
+        app_state["filename"] = file.filename
+        app_state["chunks"] = texts
+        app_state["metadatas"] = metadatas
+        app_state["embeddings"] = emb_matrix
+
         return {
             "status": "success",
             "filename": file.filename,
@@ -111,15 +114,22 @@ def chat_stream(req: ChatRequest):
             f"{app_state['full_pdf_text'][:25000]}"
         )
         sys_prompt = "You are a concise technical analyst. Be brief and direct."
-    elif collection.count() > 0:
-        q_emb = client.models.embed_content(
-            model="gemini-embedding-001", contents=question
-        ).embeddings[0].values
-        results = collection.query(query_embeddings=[q_emb], n_results=5)
+    elif app_state["embeddings"] is not None and len(app_state["chunks"]) > 0:
+        q_emb = np.array(
+            client.models.embed_content(
+                model="gemini-embedding-001", contents=question
+            ).embeddings[0].values,
+            dtype=np.float32,
+        )
+        q_emb = q_emb / max(np.linalg.norm(q_emb), 1e-10)
+
+        scores = app_state["embeddings"] @ q_emb
+        top_k = min(5, len(app_state["chunks"]))
+        top_indices = np.argsort(scores)[::-1][:top_k]
 
         chunks = [
-            f"[Page {meta['page']}]: {doc}"
-            for doc, meta in zip(results["documents"][0], results["metadatas"][0])
+            f"[Page {app_state['metadatas'][idx]['page']}]: {app_state['chunks'][idx]}"
+            for idx in top_indices
         ]
         context_block = "\n\n---\n\n".join(chunks)
         prompt_to_send = (
