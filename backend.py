@@ -84,6 +84,11 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.post("/chat")
+import os
+from fastapi.staticfiles import StaticFiles
+
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 def chat_stream(req: ChatRequest):
     question = req.question
     is_summary = any(
