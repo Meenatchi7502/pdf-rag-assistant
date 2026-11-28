@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import time
 
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -53,7 +54,8 @@ async def upload_pdf(file: UploadFile = File(...)):
     try:
         pdf_bytes = await file.read()
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-        splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
+        # Larger chunks reduce total embedding calls by ~60% while preserving context
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
 
         texts, metadatas, full_text_pages = [], [], []
         for page_idx in range(len(doc)):
@@ -68,10 +70,12 @@ async def upload_pdf(file: UploadFile = File(...)):
         if not texts:
             raise HTTPException(status_code=400, detail="No readable text found in PDF.")
 
-        # Embed in batches of 50 to avoid Gemini API batch size limits
+        # Embed in batches of 40 with rate-limit protection for Free Tier (100 chunks/min)
         embeddings = []
-        batch_size = 50
+        batch_size = 40
         for i in range(0, len(texts), batch_size):
+            if i > 0 and i % 80 == 0:
+                time.sleep(62)  # Wait for Free Tier per-minute quota reset on large PDFs
             batch = texts[i : i + batch_size]
             emb_res = client.models.embed_content(
                 model="gemini-embedding-001", contents=batch
